@@ -1353,16 +1353,32 @@ static bool loadAllObjects() {
     // b/494690861: funcs may trigger Real-time Kernel Protection (RKP)
     bool funcs = isAtLeast26Q2 && isAtLeastKernelVersion(6, 6, 118);
 
-    if (!loadObject(BPFROOT "offload.o", /*libbpf*/false)) return false;
-    if (!loadObject(BPFROOT "test.o")) return false;
-    if (!loadObject(BPFROOT "clatd.o")) return false;
+    // [p11-bpfdiag] load each object independently and keep going, so a single
+    // failing object cannot abort the whole boot. The per-object result is
+    // logged with a distinct marker; the device boots and the complete failure
+    // list can be pulled via logcat. Revert once the 4.19 kernel BPF backport
+    // makes all five objects load.
+    struct { const char* path; bool libbpf; } diagObjs[] = {
+        {BPFROOT "offload.o", false},
+        {BPFROOT "test.o", true},
+        {BPFROOT "clatd.o", true},
+        {BPFROOT "dscpPolicy.o", true},
+        {BPFROOT "netd.o", true},
+    };
     if (funcs) {
-        if (!loadObject(BPFROOT "dscpPolicy@funcs.o")) return false;
-        if (!loadObject(BPFROOT "netd@funcs.o")) return false;
-    } else {
-        if (!loadObject(BPFROOT "dscpPolicy.o")) return false;
-        if (!loadObject(BPFROOT "netd.o")) return false;
+        diagObjs[3].path = BPFROOT "dscpPolicy@funcs.o";
+        diagObjs[4].path = BPFROOT "netd@funcs.o";
     }
+    int failed = 0;
+    for (const auto& obj : diagObjs) {
+        if (!loadObject(obj.path, obj.libbpf)) {
+            ALOGE("[p11-bpfdiag] FAILED object: %s (libbpf:%d)", obj.path, obj.libbpf);
+            failed++;
+        } else {
+            ALOGI("[p11-bpfdiag] ok object: %s", obj.path);
+        }
+    }
+    ALOGE("[p11-bpfdiag] summary: %zu objects, %d failed", sizeof(diagObjs) / sizeof(diagObjs[0]), failed);
     return true;
 }
 
@@ -1845,7 +1861,9 @@ static int doLoad(char** argv, char * const envp[]) {
     auto end = steady_clock::now();
     auto timeTaken = duration_cast<milliseconds>(end - start).count();
     ALOGD("Loaded total objects took %lld ms", timeTaken);
-    {
+    // [p11-bpfdiag] test.o may have failed to load, in which case there is no
+    // kernel stats map to write into; skip instead of aborting the boot.
+    if (bpfKernelStatsMapFd.ok()) {
         uint32_t key = BPF_KERNEL_STATS_MAP_KEY_TOTAL_OBJS_LOAD_TIME_MS;
         if (writeToMapEntry(bpfKernelStatsMapFd, &key, &timeTaken, BPF_ANY)) {
             ALOGE("Failed to write object load time to kernel stats map, err: [%d, %s]",
@@ -1860,6 +1878,8 @@ static int doLoad(char** argv, char * const envp[]) {
                   "[%d, %s]", errno, strerror(errno));
             if (isAtLeastT) return 40;
         }
+    } else {
+        ALOGW("[p11-bpfdiag] kernel stats map unavailable, skipping stats write.");
     }
 
     // leave a flag that we're done
