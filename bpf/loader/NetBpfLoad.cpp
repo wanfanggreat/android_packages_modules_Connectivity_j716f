@@ -1569,21 +1569,22 @@ static int doLoad(char** argv, char * const envp[]) {
     // 25Q2 bumps the kernel requirement up to 5.4
     // see also: //system/netd/tests/kernel_test.cpp TestKernel54
     if (isAtLeast25Q2 && !isAtLeastKernelVersion(5, 4)) {
-        ALOGE("Android 25Q2 requires kernel 5.4.");
-        return 6;
+        // p11_pro_plus (TB-J716F) carries a CAF 4.19.312 kernel that cannot be
+        // bumped to 5.4. Continue with the 4.19 kernel like Android V did;
+        // BPF programs that need newer kernel features will fail individually
+        // at load time instead of reboot-looping the whole device.
+        ALOGW("[KernelUpRev-exempt] skipping 5.4 kernel requirement (4.19 in use).");
     }
 
     // 25Q4 bumps the kernel requirement up to 5.10
     // see also: //system/netd/tests/kernel_test.cpp TestKernel510
     if (isAtLeast25Q4 && !isAtLeastKernelVersion(5, 10)) {
-        ALOGE("Android 25Q4 requires kernel 5.10.");
-        return 7;
+        ALOGW("[KernelUpRev-exempt] skipping 5.10 kernel requirement (4.19 in use).");
     }
 
     // 26Q4 bumps the kernel requirement up to 5.15
     if (isAtLeast26Q4 && !isAtLeastKernelVersion(5, 15)) {
-        ALOGE("Android 26Q4 requires kernel 5.15.");
-        return 7;
+        ALOGW("[KernelUpRev-exempt] skipping 5.15 kernel requirement (4.19 in use).");
     }
 
     // Technically already required by U, but only enforce on V+
